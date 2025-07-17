@@ -10,12 +10,24 @@ using IxMilia.Dxf;
 using IxMilia.Dxf.Entities;
 using Path = System.Windows.Shapes.Path;
 using System.Text;
+using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Windows.Input;
 
 namespace DxfViewerWithIxMilia
 {
+    public class KalipUzaklikItem
+    {
+        public string No { get; set; }
+        public string X { get; set; }
+        public string Y { get; set; }
+        public string Kalip { get; set; }
+    }
+
     public partial class MainWindow : Window
     {
         private List<(double x, double y, int kalipNo)> kalipMerkezUzakliklari = new List<(double x, double y, int kalipNo)>();
+        private ObservableCollection<KalipUzaklikItem> kalipUzaklikItems = new();
 
         private double PozitifSifirYap(double deger)
         {
@@ -25,11 +37,53 @@ namespace DxfViewerWithIxMilia
 
         private string currentDxfFilePath = null;
 
+        private Point mouseStart;
+        private Point scrollStart;
+        private bool isPanning = false;
 
         public MainWindow()
         {
             InitializeComponent();
+            KalipUzakliklarItemsControl.ItemsSource = kalipUzaklikItems;
         }
+
+        private void ScrollViewer_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            var scrollViewer = sender as ScrollViewer;
+            if (scrollViewer == null) return;
+
+            isPanning = true;
+            mouseStart = e.GetPosition(scrollViewer);
+            scrollStart = new Point(scrollViewer.HorizontalOffset, scrollViewer.VerticalOffset);
+            scrollViewer.CaptureMouse();
+            e.Handled = true;
+        }
+
+        private void ScrollViewer_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!isPanning) return;
+
+            var scrollViewer = sender as ScrollViewer;
+            if (scrollViewer == null) return;
+
+            Point currentPosition = e.GetPosition(scrollViewer);
+            Vector delta = Point.Subtract(currentPosition, mouseStart);
+
+            scrollViewer.ScrollToHorizontalOffset(scrollStart.X - delta.X);
+            scrollViewer.ScrollToVerticalOffset(scrollStart.Y - delta.Y);
+            e.Handled = true;
+        }
+
+        private void ScrollViewer_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            var scrollViewer = sender as ScrollViewer;
+            if (scrollViewer == null) return;
+
+            isPanning = false;
+            scrollViewer.ReleaseMouseCapture();
+            e.Handled = true;
+        }
+
 
         private void btnOpenFile_Click(object sender, RoutedEventArgs e)
         {
@@ -305,7 +359,7 @@ namespace DxfViewerWithIxMilia
             string fileNameWithoutExt = System.IO.Path.GetFileNameWithoutExtension(fileName);
 
             // 2. Dikdörtgen çerçeve kenarlarını yeniden bul
-           // var dxf = DxfFile.Load(System.IO.Path.Combine(Environment.CurrentDirectory, fileName));
+            // var dxf = DxfFile.Load(System.IO.Path.Combine(Environment.CurrentDirectory, fileName));
             var dikdortgenKenarlar = dxf.Entities.OfType<DxfLine>()
                 .Where(line => {
                     var color = GetEntityColor(line, dxf);
@@ -365,8 +419,8 @@ namespace DxfViewerWithIxMilia
                 var linesInGroup = grup.ToList();
                 if (linesInGroup.Count == 2)
                 {
-                    // Genişlik (uzunluk): Herhangi bir line’daki X1 ve X2’nin farkı (mutlak değer)
-                    double genislik = Math.Abs(linesInGroup[0].P1.X - linesInGroup[0].P2.X);
+                    /* Genişlik (uzunluk): Herhangi bir line’daki X1 ve X2’nin farkı (mutlak değer)
+                    double genislik = Math.Abs(linesInGroup[0].P1.X - linesInGroup[0].P2.X); */
 
                     // Kalınlık: İki line’ın Y değerlerinin farkı (ikisinin Y’sinin ortalaması alınır, sonra aradaki fark)
                     double y1 = (linesInGroup[0].P1.Y + linesInGroup[0].P2.Y) / 2.0;
@@ -374,17 +428,16 @@ namespace DxfViewerWithIxMilia
                     double kalinlik2 = Math.Abs(y1 - y2);
 
                     // String’e ekle, noktadan sonraki iki hane, her zaman noktayı ayraç yap
-                    string genislikStr = genislik.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                    // string genislikStr = genislik.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
                     string kalinlikStr2 = kalinlik2.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
 
-                    ekIcerik += $" {genislikStr} {kalinlikStr2}";
+                    ekIcerik += $" {kalinlikStr2}";
                 }
             }
 
 
             // 5. Satır: <dosyaadı> <uzunluk> <kalınlık> <uzaklıklar>
             string meoSatir = $"{fileNameWithoutExt} {uzunlukStr} {kalinlikStr}{ekIcerik} {uzakliklar}";
-
 
             // 6. Dosyayı kaydet
             var saveDialog = new Microsoft.Win32.SaveFileDialog()
@@ -487,29 +540,22 @@ namespace DxfViewerWithIxMilia
                 .ThenBy(k => k.y)
                 .ToList();
 
-            StringBuilder sb = new StringBuilder();
-            int sayac = 0;
+            kalipUzaklikItems.Clear(); // Önce eski verileri temizle
 
+            int no = 1;
             foreach (var uzaklik in siraliUzakliklar)
             {
-                // Formatı "x: 30 y: -0 k: 1" şeklinde oluştur
-                sb.Append($"x: {uzaklik.x} y: {uzaklik.y} k: {uzaklik.kalipNo}");
-
-                sayac++;
-
-                // Her 5 kalıptan sonra yeni satır, değilse virgül ve boşluk
-                if (sayac % 5 == 0)
+                kalipUzaklikItems.Add(new KalipUzaklikItem
                 {
-                    sb.AppendLine();
-                }
-                else if (sayac < siraliUzakliklar.Count)
-                {
-                    sb.Append(", ");
-                }
+                    No = no++.ToString(),
+                    X = uzaklik.x.ToString("0.##", CultureInfo.InvariantCulture),
+                    Y = uzaklik.y.ToString("0.##", CultureInfo.InvariantCulture),
+                    Kalip = uzaklik.kalipNo.ToString()
+                });
             }
-
-            KalipUzaklikTextBlock.Text = sb.ToString();
         }
+
+
 
         // --- Layer adından kalıp numarasını int olarak çek ---
         private int GetKalipNumberIntFromLayerName(string layerName)
